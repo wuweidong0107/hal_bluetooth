@@ -21,5 +21,6 @@ typedef struct bluetooth_backend
 } bluetooth_backend_t;
 
 extern bluetooth_backend_t bluetooth_bluetoothctl;
+extern bluetooth_backend_t bluetooth_bluez;
 
 #endif

@@ -18,6 +18,7 @@ struct bluetooth_handle {
 
 const bluetooth_backend_t *bluetooth_backends[] = {
     &bluetooth_bluetoothctl,
+    &bluetooth_bluez,
     NULL,
 };
 
@@ -65,12 +66,12 @@ bool bluetooth_connect_device(bluetooth_t *bt, const char *device, int timeout)
     return false;
 }
 
-ssize_t bluetooth_get_devices(bluetooth_t *bt, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
+size_t bluetooth_get_devices(bluetooth_t *bt, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
 {
     if (bt && bt->backend && bt->backend->get_devices)
         return bt->backend->get_devices(bt->backend_handle, devs, devnum);
     
-    return false;
+    return 0;
 }
 
 void bluetooth_scan(bluetooth_t *bt, int timeout)
@@ -98,7 +99,7 @@ int bluetooth_open(bluetooth_t *bt, const char *backend)
     if(bt->backend->init) {
         bt->backend_handle = bt->backend->init();
         if (bt->backend_handle == NULL)
-            return _bluetooth_error(bt, BLUETOOTH_ERROR_OPEN, 0, "Bluetooth init fail", backend);
+            return _bluetooth_error(bt, BLUETOOTH_ERROR_OPEN, 0, "Bluetooth backend %s init fail", backend);
     } else {
         return _bluetooth_error(bt, BLUETOOTH_ERROR_OPEN, 0, "Bluetooth backend %s not implemented yet", backend);
     }

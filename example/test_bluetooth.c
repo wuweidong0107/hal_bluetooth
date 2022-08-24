@@ -15,7 +15,7 @@ bool wait_status(bluetooth_t *bt, const char *device, device_status_t status, in
             return true;
         if (status == DEVICE_DISCONNECTED && !bluetooth_device_is_connected(bt, device))
             return true;
-        if (timeout > 0)
+        if (timeout-- > 0)
             sleep(1);
     } while(timeout > 0);
     return false;
@@ -24,13 +24,15 @@ bool wait_status(bluetooth_t *bt, const char *device, device_status_t status, in
 int main(void)
 {
     bluetooth_t *bt = bluetooth_new();
-    if (bluetooth_open(bt, "bluetoothctl")) {
+    if (bluetooth_open(bt, "bluez")) {
         fprintf(stderr, "%s\n", bluetooth_errmsg(bt));
         exit(1);
     }
-    int timeout = 0;
-    bluetooth_scan(bt, timeout);
 
+
+    printf("scanning...\n");
+    bluetooth_scan(bt, 3);
+#if 0
     char devs[64][BLUETOOTH_DEVNAME_MAXLEN];
     int i = 0, len;
     len =bluetooth_get_devices(bt, devs, sizeof(devs)/sizeof(devs[0]));
@@ -40,13 +42,14 @@ int main(void)
     const char *device = "WI-XB400";
     printf("%s connecting\n", device);
     bluetooth_connect_device(bt, device, 0);
-    wait_status(bt, device, DEVICE_CONNECTED, 5);
-    printf("%s connected %s\n", device, wait_status(bt, device, DEVICE_CONNECTED, 5) ? "OK":"fail");
+    printf("%s connected %s\n", device, wait_status(bt, device, DEVICE_CONNECTED, 3) ? "OK":"fail");
 
-    printf("%s disconnecting\n", device);
-    bluetooth_disconnect_device(bt, device, 0);
-    printf("%s disconnected %s\n", device, wait_status(bt, device, DEVICE_DISCONNECTED, 5) ? "OK":"fail");
-
+    if (bluetooth_device_is_connected(bt, device)) {
+        printf("%s disconnecting\n", device);
+        bluetooth_disconnect_device(bt, device, 0);
+        printf("%s disconnected %s\n", device, wait_status(bt, device, DEVICE_DISCONNECTED, 3) ? "OK":"fail");
+    }
+#endif
     bluetooth_close(bt);
     bluetooth_free(bt);
 }

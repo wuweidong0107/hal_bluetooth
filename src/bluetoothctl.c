@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <list.h>
+#include "list.h"
 #include "bluetooth_internal.h"
 
 #define min(x, y) (((x) < (y)) ? (x) : (y))
@@ -16,23 +16,24 @@ typedef struct bluetooth_device {
 
 typedef struct bluetoothctl_handle {
     struct list_head devices;
-    bool is_connected;
-    bluetooth_device_t *connected_dev;
 } bluetoothctl_t;
 
-void* bluetoothctl_init(void)
+static void* bluetoothctl_init(void)
 {
-    bluetoothctl_t *btctl = calloc(1, sizeof(bluetoothctl_t));
-
-    btctl->is_connected = false;
-    btctl->connected_dev = NULL;
+    bluetoothctl_t *btctl;
+    int ret;
+    
+    ret = pclose(popen("bluetoothctl -v >/dev/null 2>&1", "r"));
+    if (WIFEXITED(ret) != 1 || WEXITSTATUS(ret) !=0 )
+        return NULL;
+        
+    btctl = calloc(1, sizeof(bluetoothctl_t));
     INIT_LIST_HEAD(&btctl->devices);
     return btctl;
 }
 
-void bluetoothctl_free(void *handle)
+static void free_devices(bluetoothctl_t *btctl)
 {
-    bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
     bluetooth_device_t *dev;
 
     while(!list_empty(&btctl->devices)) {
@@ -40,12 +41,27 @@ void bluetoothctl_free(void *handle)
         list_del(&dev->list);
         free(dev);
     }
+}
 
+static void __attribute__((unused)) dump_devices(bluetoothctl_t *btctl)
+{
+    bluetooth_device_t *dev;
+
+	list_for_each_entry(dev, &btctl->devices, list) {
+        printf("name: %s, address: %s\n", dev->name, dev->macaddr);
+	}
+}
+
+static void bluetoothctl_free(void *handle)
+{
+    bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
+
+    free_devices(btctl);
     if (handle)
         free(handle);
 }
 
-void bluetoothctl_scan(void *handle, int timeout)
+static void bluetoothctl_scan(void *handle, int timeout)
 {
     bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
     FILE *stream;
@@ -54,11 +70,14 @@ void bluetoothctl_scan(void *handle, int timeout)
 
     if(timeout < 1)
         timeout = 1;
-        
+
+    /* Clean up */
+    free_devices(btctl);
+
+    /* Fill up */
     pclose(popen("bluetoothctl -- power on", "r"));
     snprintf(command, sizeof(command), "bluetoothctl --timeout %d scan on", timeout);
     pclose(popen(command, "r"));
-
     stream = popen("bluetoothctl -- devices", "r");
     while(fgets(line, sizeof(line), stream)) {
         if (!strncmp(line, "Device ", strlen("Device "))) {
@@ -79,11 +98,12 @@ void bluetoothctl_scan(void *handle, int timeout)
             strncpy(dev->name, p, sizeof(dev->name));
             dev->name[sizeof(dev->name)-1] = '\0'; 
             list_add_tail(&dev->list, &btctl->devices);
+            printf("add: %s\n", dev->name);
         }
     }
 }
 
-ssize_t bluetoothctl_get_devices(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
+static ssize_t bluetoothctl_get_devices(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
 {
     bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
     bluetooth_device_t *dev;
@@ -98,7 +118,7 @@ ssize_t bluetoothctl_get_devices(void *handle, char devs[][BLUETOOTH_DEVNAME_MAX
     return num;
 }
 
-bool bluetoothctl_device_is_connected(void *handle, const char *device)
+static bool bluetoothctl_device_is_connected(void *handle, const char *device)
 {
     bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
     bluetooth_device_t *dev;
@@ -120,7 +140,7 @@ bool bluetoothctl_device_is_connected(void *handle, const char *device)
     return false;
 }
 
-bool bluetoothctl_connect_device(void *handle, const char *device, int timeout)
+static bool bluetoothctl_connect_device(void *handle, const char *device, int timeout)
 {
     bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
     bluetooth_device_t *dev;
@@ -155,7 +175,7 @@ bool bluetoothctl_connect_device(void *handle, const char *device, int timeout)
     return false;
 }
 
-bool bluetoothctl_disconnect_device(void *handle, const char *device, int timeout)
+static bool bluetoothctl_disconnect_device(void *handle, const char *device, int timeout)
 {
     bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
     bluetooth_device_t *dev;
