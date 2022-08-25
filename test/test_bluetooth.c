@@ -8,7 +8,7 @@ typedef enum device_status {
     DEVICE_DISCONNECTED,
 } device_status_t;
 
-bool wait_status(bluetooth_t *bt, const char *device, device_status_t status, int timeout)
+static bool wait_status(bluetooth_t *bt, const char *device, device_status_t status, int timeout)
 {
     do {
         if (status == DEVICE_CONNECTED && bluetooth_device_is_connected(bt, device))
@@ -21,14 +21,13 @@ bool wait_status(bluetooth_t *bt, const char *device, device_status_t status, in
     return false;
 }
 
-int main(void)
+static void test_backend(bluetooth_t *bt, const char *backend)
 {
-    bluetooth_t *bt = bluetooth_new();
-    if (bluetooth_open(bt, "bluetoothctl")) {
+    if (bluetooth_open(bt, backend)) {
         fprintf(stderr, "%s\n", bluetooth_errmsg(bt));
         exit(1);
     }
-
+    printf("Test backend: %s\n", backend);
     printf("scanning...\n");
     bluetooth_scan(bt,3);
     char devs[64][BLUETOOTH_DEVNAME_MAXLEN];
@@ -49,5 +48,14 @@ int main(void)
     }
 
     bluetooth_close(bt);
+ 
+}
+int main(void)
+{
+    bluetooth_t *bt = bluetooth_new();
+
+    test_backend(bt, "bluez");
+    test_backend(bt, "bluetoothctl");
+
     bluetooth_free(bt);
 }

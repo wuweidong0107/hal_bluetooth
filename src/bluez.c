@@ -1,31 +1,32 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <dbus/dbus.h>
 
 #include "list.h"
 #include "bluetooth_internal.h"
 
 typedef struct bluetooth_device {
-   /* object path. usually looks like /org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF */
-   char path[128];
+    /* object path. usually looks like /org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF */
+    char path[128];
 
-   /* for display purposes */
-   char name[BLUETOOTH_DEVNAME_MAXLEN];
+    /* for display purposes */
+    char name[BLUETOOTH_DEVNAME_MAXLEN];
 
-   /* MAC address, 17 bytes */
-   char macaddr[32];
+    /* MAC address, 17 bytes */
+    char macaddr[32];
 
-   /* freedesktop.org icon name
+    /* freedesktop.org icon name
     * See bluez/src/dbus-common.c
     * Can be NULL */
-   char icon[64];
+    char icon[64];
 
-   int connected;
-   int paired;
-   int trusted;
+    int connected;
+    int paired;
+    int trusted;
 
-	struct list_head list;
+    struct list_head list;
 } bluetooth_device_t;
 
 typedef struct bluez_handle {
@@ -33,6 +34,26 @@ typedef struct bluez_handle {
     char adapter[256];
     struct list_head devices;
 } bluez_t;
+
+static void free_devices(bluez_t *bluez)
+{
+    bluetooth_device_t *dev;
+
+    while(!list_empty(&bluez->devices)) {
+        dev = list_first_entry(&bluez->devices, bluetooth_device_t, list);
+        list_del(&dev->list);
+        free(dev);
+    }
+}
+
+static void __attribute__((unused)) dump_devices(bluez_t *bluez)
+{
+    bluetooth_device_t *dev;
+
+	list_for_each_entry(dev, &bluez->devices, list) {
+        printf("path: %s, name: %s, address: %s\n", dev->path, dev->name, dev->macaddr);
+	}
+}
 
 static void* bluez_init(void)
 {
@@ -63,8 +84,7 @@ static int set_bool_property(
                 const char *path, 
                 const char *arg_adapter, 
                 const char *arg_property,
-                int value,
-                int timeout)
+                int value)
 {
     DBusError err;
     DBusMessage *message, *reply;
@@ -100,11 +120,13 @@ static int set_bool_property(
         goto fault;
 
     reply = dbus_connection_send_with_reply_and_block(bluez->dbus_connection,
-        message, 1000 * timeout, &err);
+        message, 1000, &err);   // 1 second, can't be too long. Otherwise other api may occur message is locked
     if (!reply)
         goto fault;
+
     dbus_message_unref(reply);
     dbus_message_unref(message);
+
     return 0;
 
 fault:
@@ -118,8 +140,7 @@ static int get_bool_property(
                 const char *path,
                 const char *arg_adapter,
                 const char *arg_property,
-                int *value,
-                int timeout)
+                int *value)
 {
     DBusMessage *message, *reply;
     DBusError err;
@@ -139,7 +160,7 @@ static int get_bool_property(
         return 1;
 
     reply = dbus_connection_send_with_reply_and_block(bluez->dbus_connection,
-        message, 1000 * timeout, &err);
+        message, 1000, &err);
 
     dbus_message_unref(message);
 
@@ -176,23 +197,6 @@ static int adapter_discovery(bluez_t *bluez, const char *method)
     return 0;
 }
 
-static void bluez_dbus_connect(bluez_t *bluez)
-{
-    DBusError err;
-    dbus_error_init(&err);
-    bluez->dbus_connection = dbus_bus_get_private(DBUS_BUS_SYSTEM, &err);
-}
-
-static void bluez_dbus_disconnect(bluez_t *bluez)
-{
-    if (!bluez->dbus_connection)
-        return;
-    
-    dbus_connection_close(bluez->dbus_connection);
-    dbus_connection_unref(bluez->dbus_connection);
-    bluez->dbus_connection = NULL;
-}
-
 static int get_managed_objects(bluez_t *bluez, DBusMessage **reply)
 {
     DBusMessage *message;
@@ -210,6 +214,30 @@ static int get_managed_objects(bluez_t *bluez, DBusMessage **reply)
     /* if (!reply) is done by the caller in this one */
 
     dbus_message_unref(message);
+    return 0;
+}
+
+static int device_method(bluez_t *bluez, const char *path, const char *method, int timeout)
+{
+    DBusMessage *message, *reply;
+    DBusError err;
+
+    dbus_error_init(&err);
+
+    message = dbus_message_new_method_call("org.bluez", path,
+                "org.bluez.Device1", method);
+    if (!message) {
+        return 1;
+    }
+    reply = dbus_connection_send_with_reply_and_block(bluez->dbus_connection,
+            message, 1000*timeout, &err);
+    if (!reply) {
+        return 1;
+    }
+
+    dbus_connection_flush(bluez->dbus_connection);
+    dbus_message_unref(message);
+
     return 0;
 }
 
@@ -286,26 +314,6 @@ static int get_default_adapter(bluez_t *bluez, DBusMessage *reply)
     return 1;
 }
 
-static void free_devices(bluez_t *bluez)
-{
-    bluetooth_device_t *dev;
-
-    while(!list_empty(&bluez->devices)) {
-        dev = list_first_entry(&bluez->devices, bluetooth_device_t, list);
-        list_del(&dev->list);
-        free(dev);
-    }
-}
-
-static void __attribute__((unused)) dump_devices(bluez_t *bluez)
-{
-    bluetooth_device_t *dev;
-
-	list_for_each_entry(dev, &bluez->devices, list) {
-        printf("name: %s, address: %s\n", dev->name, dev->macaddr);
-	}
-}
-
 static int read_scanned_devices(bluez_t *bluez, DBusMessage *reply)
 {
     DBusMessageIter root_iter;
@@ -323,8 +331,8 @@ static int read_scanned_devices(bluez_t *bluez, DBusMessage *reply)
     if (DBUS_TYPE_ARRAY != dbus_message_iter_get_arg_type(&root_iter))
         return 1;
 
+    free_devices(bluez);
     dbus_message_iter_recurse(&root_iter, &array_1_iter);
-
     do {
         /* a{...} */
         if (DBUS_TYPE_DICT_ENTRY != 
@@ -348,8 +356,6 @@ static int read_scanned_devices(bluez_t *bluez, DBusMessage *reply)
             dbus_message_iter_get_arg_type(&dict_1_iter))
             return 1;
 
-        free_devices(bluez);
-        dump_devices(bluez);
         dbus_message_iter_recurse(&dict_1_iter, &array_2_iter);
         do {
             /* empty array? */
@@ -444,18 +450,32 @@ static int read_scanned_devices(bluez_t *bluez, DBusMessage *reply)
                             &dev->trusted);
                 }
             } while (dbus_message_iter_next(&array_3_iter));
-            printf("name: %s, address: %s\n", dev->name, dev->macaddr);
             list_add_tail(&dev->list, &bluez->devices);
         } while (dbus_message_iter_next(&array_2_iter));
     } while (dbus_message_iter_next(&array_1_iter));
 
-    dump_devices(bluez);
     return 0;
+}
+
+static void bluez_dbus_connect(bluez_t *bluez)
+{
+    DBusError err;
+    dbus_error_init(&err);
+    bluez->dbus_connection = dbus_bus_get_private(DBUS_BUS_SYSTEM, &err);
+}
+
+static void bluez_dbus_disconnect(bluez_t *bluez)
+{
+    if (!bluez->dbus_connection)
+        return;
+    
+    dbus_connection_close(bluez->dbus_connection);
+    dbus_connection_unref(bluez->dbus_connection);
+    bluez->dbus_connection = NULL;
 }
 
 static void bluez_scan(void *handle, int timeout)
 {
-    DBusError err;
     DBusMessage *reply;
     bluez_t *bluez = (bluez_t *)handle;
 
@@ -472,7 +492,7 @@ static void bluez_scan(void *handle, int timeout)
 
     /* Power device on */
     if (set_bool_property(bluez, bluez->adapter,
-            "org.bluez.Adapter1", "Powered", 1, 1))
+            "org.bluez.Adapter1", "Powered", 1))
         return;
 
     /* Start discovery */
@@ -497,32 +517,99 @@ static void bluez_scan(void *handle, int timeout)
     bluez_dbus_disconnect(bluez);
 }
 
-static size_t bluez_get_devices(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
+static int bluez_get_devices(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
 {
     bluez_t *bluez = (bluez_t *)handle;
+    bluetooth_device_t *dev;
+    int num = 0;
 
-    return 0;
+	list_for_each_entry(dev, &bluez->devices, list) {
+        strncpy(devs[num], dev->name, sizeof(devs[num]));
+        num++;
+        if (num == devnum)
+            break;
+	}
+    return num;
 }
 
 static bool bluez_device_is_connected(void *handle, const char *device)
 {
     bluez_t *bluez = (bluez_t *)handle;
+    bluetooth_device_t *dev;
+    int value;
 
-    return false;
+    bluez_dbus_connect(bluez);
+
+    list_for_each_entry(dev, &bluez->devices, list) {
+        if(!strncmp(dev->name, device, strlen(device))) {
+            if (get_bool_property(bluez, dev->path,
+                                    "org.bluez.Device1", "Connected", &value))
+                value = false;
+        }
+    }
+    bluez_dbus_disconnect(bluez);
+    return value;
 }
 
-static bool bluez_connect_device(void *handle, const char *device, int timeout)
+static bool bluez_connect_device(void *handle,const char *device, int timeout)
 {
     bluez_t *bluez = (bluez_t *)handle;
+    bluetooth_device_t *dev;
 
-    return false;
+    if(bluez_device_is_connected(bluez, device))
+        return true;
+
+    bluez_dbus_connect(bluez);
+
+	list_for_each_entry(dev, &bluez->devices, list) {
+        if(!strncmp(dev->name, device, strlen(device))) {
+
+            /* Trust the device */
+            if (set_bool_property(bluez, dev->path,
+                    "org.bluez.Device1", "Trusted", 1)) {
+                bluez_dbus_disconnect(bluez);
+                return false;
+            }
+            
+            /* Pair the device */
+            if (device_method(bluez, dev->path, "Pair", timeout)) {
+                bluez_dbus_disconnect(bluez);
+                printf("Error\n");
+                return false;
+            }
+
+            /* Connect the device */
+            if (device_method(bluez, dev->path, "Connect", timeout)) {
+                bluez_dbus_disconnect(bluez);
+                return false;
+            }
+        }
+    }
+
+    bluez_dbus_disconnect(bluez);
+    return true;
 }
 
 static bool bluez_disconnect_device(void *handle, const char *device, int timeout)
 {
     bluez_t *bluez = (bluez_t *)handle;
-    
-    return false;
+    bluetooth_device_t *dev;
+
+    if (!bluez_device_is_connected(handle, device))
+        return true;
+
+    list_for_each_entry(dev, &bluez->devices, list) {
+        if(!strncmp(dev->name, device, strlen(device))) {
+            /* Disconnect the device */
+            if (device_method(bluez, dev->path, "Disconnect", timeout)) {
+                bluez_dbus_disconnect(bluez);
+                return false;
+            }
+        }
+    }
+
+    bluez_dbus_disconnect(bluez);
+    return true;
 }
 
 bluetooth_backend_t bluetooth_bluez = {

@@ -98,16 +98,15 @@ static void bluetoothctl_scan(void *handle, int timeout)
             strncpy(dev->name, p, sizeof(dev->name));
             dev->name[sizeof(dev->name)-1] = '\0'; 
             list_add_tail(&dev->list, &btctl->devices);
-            printf("add: %s\n", dev->name);
         }
     }
 }
 
-static ssize_t bluetoothctl_get_devices(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
+static int bluetoothctl_get_devices(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum)
 {
     bluetoothctl_t *btctl = (bluetoothctl_t *)handle;
     bluetooth_device_t *dev;
-    ssize_t num = 0;
+    int num = 0;
 
 	list_for_each_entry(dev, &btctl->devices, list) {
         strncpy(devs[num], dev->name, sizeof(devs[num]));
@@ -152,20 +151,20 @@ static bool bluetoothctl_connect_device(void *handle, const char *device, int ti
 
 	list_for_each_entry(dev, &btctl->devices, list) {
         if(!strncmp(dev->name, device, strlen(device))) {
-            snprintf(command, sizeof(command), "bluetoothctl -- pairable on");
+            snprintf(command, sizeof(command), "bluetoothctl --timeout %d pairable on",
+                 timeout);
             pclose(popen(command, "r"));
 
-            snprintf(command, sizeof(command), "bluetoothctl -- pair %s",
-                    dev->macaddr);
+            snprintf(command, sizeof(command), "bluetoothctl --timeout %d pair %s",
+                 timeout, dev->macaddr);
             pclose(popen(command, "r"));
 
-            snprintf(command, sizeof(command), "bluetoothctl -- trust %s",
-                    dev->macaddr);
+            snprintf(command, sizeof(command), "bluetoothctl --timeout %d trust %s",
+                 timeout, dev->macaddr);
             pclose(popen(command, "r"));
 
             snprintf(command, sizeof(command), "bluetoothctl --timeout %d connect %s",
-                    timeout,
-                    dev->macaddr);
+                 timeout, dev->macaddr);
             ret = pclose(popen(command, "r"));
             return WIFEXITED(ret);
         }

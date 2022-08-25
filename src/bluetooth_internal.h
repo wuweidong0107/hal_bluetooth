@@ -12,7 +12,7 @@ typedef struct bluetooth_backend
     void* (*init)(void);
     void (*free)(void *handle);
     void (*scan)(void *handle, int timeout);
-    ssize_t (*get_devices)(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum);
+    int (*get_devices)(void *handle, char devs[][BLUETOOTH_DEVNAME_MAXLEN], int devnum);
     bool (*device_is_connected)(void *handle, const char *device);
     bool (*connect_device)(void *handle, const char *device, int timeout);
     bool (*disconnect_device)(void *handle, const char *device, int timeout);
